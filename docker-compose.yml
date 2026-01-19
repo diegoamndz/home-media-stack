@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # VPN Container con killswitch
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      # qBittorrent WebUI
+      - "8080:8080"
+      # qBittorrent TCP/UDP
+      - "6881:6881"
+      - "6881:6881/udp"
+    environment:
+      # VPN Provider - choose your weapon
+      # Different Providers
+      - VPN_SERVICE_PROVIDER=mullvad
+      - VPN_TYPE=openvpn
+      
+      # Config VPN when you ready (remove comment)
+      # - OPENVPN_USER=
+      # - OPENVPN_PASSWORD=
+      
+      # Config region/server when ready
+      # - SERVER_COUNTRIES=
+      
+      # Killswitch and networking
+      - FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16
+      - FIREWALL_VPN_INPUT_PORTS=6881
+      
+      # Timezone
+      - TZ=America/Guatemala
+      
+      # Health check
+      - HEALTH_VPN_DURATION_INITIAL=30s
+      
+      # DNS
+      - DOT=off
+      
+      # Logging
+      - LOG_LEVEL=info
+    volumes:
+      - ./config/gluetun:/gluetun
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles:
+      - vpn  # it does not go up itself
+
+  # qBittorrent - goes thru VPN
+  qbittorrent:
+    image: linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Guatemala
+      - WEBUI_PORT=8080
+    volumes:
+      - ./config/qbittorrent:/config
+      - ./data/torrents:/data/torrents
+    restart: unless-stopped
+    profiles:
+      - vpn  # does not go up by itself
+
+  # Jellyfin - does NOT go thru VPN
+  jellyfin:
+    image: linuxserver/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Guatemala
+    volumes:
+      - ./config/jellyfin:/config
+      - ./data/media:/data/media
+      - ./data/torrents/downloads:/data/torrents:ro
+    ports:
+      - "8096:8096"
+      - "8920:8920"
+      - "7359:7359/udp"
+      - "1900:1900/udp"
+    devices:
+      - /dev/dri:/dev/dri
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
+
